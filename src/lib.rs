@@ -10,9 +10,95 @@ use finch_frontend_api::{
   FinchStatic,
   FinchGetter,
   FinchSetter,
+  FinchType,
   TypeKind,
   get_package_name,
 };
+
+static mut CRATE_NAME: String = String::new();
+
+trait ToCPPType {
+  fn to_cpp_type(&self) -> String;
+}
+
+impl ToCPPType for FinchType {
+  fn to_cpp_type(&self) -> String {
+    match self.kind {
+      TypeKind::Void => "void".to_string(),
+      TypeKind::Typedef => {
+        match self.display_name.as_str() {
+          // TODO: Add more branches
+          _ => self.canonical_type.as_ref().unwrap().to_cpp_type(),
+        }
+      }
+
+      TypeKind::Pointer => {
+        format!("{}*", self.pointee_type.as_ref().unwrap().to_cpp_type())
+      }
+
+      TypeKind::CharS => "signed char".to_string(),
+      TypeKind::CharU => "unsigned char".to_string(),
+
+      TypeKind::Short => "short".to_string(),
+      TypeKind::UShort => "unsigned short".to_string(),
+      TypeKind::Int => "int".to_string(),
+      TypeKind::UInt => "unsigned int".to_string(),
+      TypeKind::Long => "long".to_string(),
+      TypeKind::ULong => "unsigned long".to_string(),
+      TypeKind::LongLong => "long long".to_string(),
+      TypeKind::ULongLong => "unsigned long long".to_string(),
+
+      TypeKind::Record => {
+        if self.display_name == format!("finch::bindgen::{}::FinchString", unsafe { &CRATE_NAME }) {
+          "std::string".to_string()
+        } else {
+          panic!("unknown type {}", self.display_name)
+        }
+      },
+
+      _ => panic!("unknown type {}", self.display_name)
+    }
+  }
+}
+
+fn convert_return_type(type_: &Box<FinchType>, body: String) -> (String, String) {
+  match type_.kind {
+    TypeKind::Void => ("void".to_string(), body),
+    TypeKind::Typedef => {
+      match type_.display_name.as_str() {
+        // TODO: Add more branches
+        _ => convert_return_type(type_.canonical_type.as_ref().unwrap(), body),
+      }
+    }
+
+    // TypeKind::Pointer => {
+    //   (format!("{}*", self.pointee_type.as_ref().unwrap().to_cpp_type()))
+    // }
+
+    TypeKind::CharS => ("signed char".to_string(), body),
+    TypeKind::CharU => ("unsigned char".to_string(), body),
+
+    TypeKind::Short => ("short".to_string(), body),
+    TypeKind::UShort => ("unsigned short".to_string(), body),
+    TypeKind::Int => ("int".to_string(), body),
+    TypeKind::UInt => ("unsigned int".to_string(), body),
+    TypeKind::Long => ("long".to_string(), body),
+    TypeKind::ULong => ("unsigned long".to_string(), body),
+    TypeKind::LongLong => ("long long".to_string(), body),
+    TypeKind::ULongLong => ("unsigned long long".to_string(), body),
+
+    TypeKind::Record => {
+      if type_.display_name == format!("finch::bindgen::{}::FinchString", unsafe { &CRATE_NAME }) {
+        // "std::string".to_string()
+        ("std::string".to_string(), format!("finch_to_std_string({})", body))
+      } else {
+        panic!("unknown type {}", type_.display_name)
+      }
+    },
+
+    _ => panic!("unknown type {}", type_.display_name)
+  }
+}
 
 trait ToCPP {
   fn to_header(&self) -> String;
@@ -75,14 +161,14 @@ impl ToCPP for FinchMethod {
   fn to_header(&self) -> String {
     let mut args = Vec::new();
     for (i, name) in self.arg_names.iter().enumerate() {
-      args.push(format!("{} {}", self.arg_types[i].display_name, name));
+      args.push(format!("{} {}", self.arg_types[i].to_cpp_type(), name));
     }
 
     format!("
       {}
       {} {}({});",
       self.comments.as_ref().unwrap_or(&"".to_string()),
-      self.ret_type.display_name,
+      self.ret_type.to_cpp_type(),
       self.method_name,
       args.join(", ")
     )
@@ -91,13 +177,13 @@ impl ToCPP for FinchMethod {
   fn to_impl(&self) -> String {
     let mut args = Vec::new();
     for (i, name) in self.arg_names.iter().enumerate() {
-      args.push(format!("{} {}", self.arg_types[i].display_name, name));
+      args.push(format!("{} {}", self.arg_types[i].to_cpp_type(), name));
     }
 
     let mut s = format!("
       {} {}::{}({}) {{
         assert((\"The internal pointer on this object is no longer valid. Either the destructor or a method that consumes the internal pointer has been called.\", this->self != nullptr));",
-      self.ret_type.display_name,
+      self.ret_type.to_cpp_type(),
       self.class_name,
       self.method_name,
       args.join(", "),
@@ -139,14 +225,14 @@ impl ToCPP for FinchStatic {
   fn to_header(&self) -> String {
     let mut args = Vec::new();
     for (i, name) in self.arg_names.iter().enumerate() {
-      args.push(format!("{} {}", self.arg_types[i].display_name, name));
+      args.push(format!("{} {}", self.arg_types[i].to_cpp_type(), name));
     }
 
     format!("
       {}
       static {} {}({});",
       self.comments.as_ref().unwrap_or(&"".to_string()),
-      self.ret_type.display_name,
+      self.ret_type.to_cpp_type(),
       self.method_name,
       args.join(", ")
     )
@@ -155,19 +241,20 @@ impl ToCPP for FinchStatic {
   fn to_impl(&self) -> String {
     let mut args = Vec::new();
     for (i, name) in self.arg_names.iter().enumerate() {
-      args.push(format!("{} {}", self.arg_types[i].display_name, name));
+      args.push(format!("{} {}", self.arg_types[i].to_cpp_type(), name));
     }
+
+    let (c_ret_type, body) = convert_return_type(&Box::new(self.ret_type.clone()), format!("{}({})", self.fn_name, self.arg_names.join(", ")));
 
     format!("
       {} {}::{}({}) {{
-        return {}({});
+        return {};
       }}",
-      self.ret_type.display_name,
+      c_ret_type,
       self.class_name,
       self.method_name,
       args.join(", "),
-      self.fn_name,
-      self.arg_names.join(", ")
+      body,
     )
   }
 }
@@ -178,7 +265,7 @@ impl ToCPP for FinchGetter {
       {}
       {} get_{}();",
       self.comments.as_ref().unwrap_or(&"".to_string()),
-      self.type_.display_name,
+      self.type_.to_cpp_type(),
       self.field_name)
   }
 
@@ -188,7 +275,7 @@ impl ToCPP for FinchGetter {
         assert((\"The internal pointer on this object is no longer valid. Either the destructor or a method that consumes the internal pointer has been called.\", this->self != nullptr));
         return {}(this->self);
       }}",
-      self.type_.display_name,
+      self.type_.to_cpp_type(),
       self.class_name,
       self.field_name,
       self.fn_name,
@@ -203,7 +290,7 @@ impl ToCPP for FinchSetter {
       void set_{}({} value);",
       self.comments.as_ref().unwrap_or(&"".to_string()),
       self.field_name,
-      self.type_.display_name,
+      self.type_.to_cpp_type(),
     )
   }
 
@@ -215,7 +302,7 @@ impl ToCPP for FinchSetter {
       }}",
       self.class_name,
       self.field_name,
-      self.type_.display_name,
+      self.type_.to_cpp_type(),
       self.fn_name,
     )
   }
@@ -273,11 +360,15 @@ impl ToCPP for FinchClass {
   }
 }
 
-pub fn generate() -> Result<(), Box<dyn Error>> {
-  let name = get_package_name()?;
+pub fn generate(cli: bool) -> Result<(), Box<dyn Error>> {
+  let name = get_package_name(cli)?;
   let name_underscore = name.replace("-", "_");
 
-  let output = finch_frontend_api::generate()?;
+  unsafe {
+    CRATE_NAME = name_underscore.clone();
+  }
+
+  let output = finch_frontend_api::generate(cli)?;
 
   let header_name = format!("{}.h", name_underscore);
   let mut header_file = File::create(&header_name)?;
@@ -295,16 +386,12 @@ pub fn generate() -> Result<(), Box<dyn Error>> {
 
     #include \"{}-finch_bindgen.h\"
 
-    namespace {0} {{
-      
-      /// This function must be called before using this library
-      /// to initialize the internals.
-      void initialize();\n",
+    namespace {0} {{\n",
     name_underscore
   ))?;
   
-  impl_file.write_fmt(format_args!(
-    "#pragma once;
+  impl_file.write_fmt(format_args!("
+    #pragma once;
     
     #include <cstdarg>
     #include <cstdint>
@@ -313,9 +400,10 @@ pub fn generate() -> Result<(), Box<dyn Error>> {
     #include <new>
 
     namespace {0} {{
-      
-      void initialize() {{
-        finch::bindgen::{0}::___finch_bindgen___{0}___initialize();
+      inline std::string finch_to_std_string(finch::bindgen::{0}::FinchString finch) {{
+        std::string str(finch.ptr, finch.len);
+        finch::bindgen::{0}::___finch_bindgen___{0}___builtin___FinchString___drop(finch);
+        return str;
       }}\n",
     name_underscore
   ))?;
