@@ -35,6 +35,10 @@ trait ToCPPType {
 
 impl ToCPPType for FinchType {
   fn to_cpp_type(&self) -> String {
+    if self.display_name.starts_with(&format!("finch::bindgen::{}::___finch_bindgen___{0}___class___", unsafe { &CRATE_NAME })) {
+      return self.display_name.split("___").collect::<Vec<&str>>()[4].to_string() + "*";
+    }
+
     if let Some(canonical_type) = self.canonical_type.as_ref() {
       return canonical_type.to_cpp_type();
     }
@@ -65,6 +69,10 @@ impl ToCPPType for FinchType {
   }
 
   fn convert_arg(&self, body: String) -> String {
+    if self.display_name.starts_with(&format!("finch::bindgen::{}::___finch_bindgen___{0}___class___", unsafe { &CRATE_NAME })) {
+      return format!("{}.self", body);
+    }
+
     if let Some(canonical_type) = self.canonical_type.as_ref() {
       return canonical_type.convert_arg(body);
     }
@@ -121,6 +129,11 @@ impl ToCPPType for FinchType {
   }
 
   fn convert_ret(&self, body: String) -> String {
+    if self.display_name.starts_with(&format!("finch::bindgen::{}::___finch_bindgen___{0}___class___", unsafe { &CRATE_NAME })) {
+      let class = self.display_name.split("___").collect::<Vec<&str>>()[4];
+      return format!("new {}({})", class, body);
+    }
+
     if let Some(canonical_type) = self.canonical_type.as_ref() {
       return canonical_type.convert_ret(body);
     }
@@ -448,10 +461,14 @@ impl ToCPP for FinchClass {
 
       {}
 
+      {1}({8} *self) {{
+        this->self = self;
+      }}
+      {} *self = nullptr;
+
       private:
         {1}(const {1}&) = delete;
         {1} &operator=(const {1}&) = delete;
-        {} *self = nullptr;
       }};",
       self.comments.as_ref().unwrap_or(&"".to_string()),
       self.name,
