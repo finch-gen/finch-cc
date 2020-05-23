@@ -1,0 +1,61 @@
+cmake_minimum_required(VERSION 2.8.2)
+
+string(REPLACE "-" "_" CRATE_NAME_UNDERSCORE ${CRATE_NAME})
+
+project(${CRATE_NAME})
+
+if(WIN32)
+  set(MSVC_SHARED_SUFFIX .lib)
+endif()
+
+message(STATUS "Checking for Cargo")
+
+find_program(CARGO_BIN cargo)
+find_program(RUSTUP_BIN rustup)
+
+if(NOT CARGO_BIN)
+  message(STATUS "Checking for Cargo - not found")
+  message(STATUS "Installing Cargo")
+
+  set(ENV{CARGO_HOME} ${CMAKE_CURRENT_BINARY_DIR}/.cargo)
+  set(ENV{RUSTUP_HOME} ${CMAKE_CURRENT_BINARY_DIR}/.rustup)
+
+  if(WIN32)
+    set(RUSTUP_INSTALLER ${CMAKE_CURRENT_BINARY_DIR}/rustup-init.exe)
+    file(DOWNLOAD "https://win.rustup.rs/x86_64" ${RUSTUP_INSTALLER})
+  else()
+    set(RUSTUP_INSTALLER ${CMAKE_CURRENT_BINARY_DIR}/rustup.rs)
+    file(DOWNLOAD "https://sh.rustup.rs" ${RUSTUP_INSTALLER})
+  endif()
+
+  execute_process(COMMAND ${RUSTUP_INSTALLER} -y --no-modify-path --profile minimal --default-toolchain none)
+
+  find_program(CARGO_BIN cargo PATHS $ENV{CARGO_HOME}/bin)
+  find_program(RUSTUP_BIN rustup PATHS $ENV{CARGO_HOME}/bin)
+  
+  if(NOT CARGO_BIN)
+    message(FATAL_ERROR "Failed to locate Cargo")
+  endif()
+else()
+  message(STATUS "Checking for Cargo - found ${CARGO_BIN}")
+endif()
+
+message(STATUS "Using Cargo at ${CARGO_BIN}")
+
+execute_process(COMMAND ${RUSTUP_BIN} install nightly --profile minimal)
+
+include(ExternalProject)
+ExternalProject_Add(${CRATE_NAME}
+  PREFIX ${CMAKE_CURRENT_BINARY_DIR}/${CRATE_NAME}
+  CONFIGURE_COMMAND ""
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
+  BUILD_IN_SOURCE TRUE
+  BUILD_ALWAYS TRUE
+  BUILD_COMMAND ${CARGO_BIN} +nightly build --target-dir ${CMAKE_CURRENT_BINARY_DIR}/${CRATE_NAME}/target
+  INSTALL_COMMAND ${CMAKE_COMMAND} -E copy
+    ${CMAKE_CURRENT_BINARY_DIR}/${CRATE_NAME}/target/debug/${CMAKE_SHARED_LIBRARY_PREFIX}${CRATE_NAME_UNDERSCORE}${CMAKE_SHARED_LIBRARY_SUFFIX} ${CMAKE_CURRENT_BINARY_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy
+    ${CMAKE_CURRENT_BINARY_DIR}/${CRATE_NAME}/target/debug/${CMAKE_SHARED_LIBRARY_PREFIX}${CRATE_NAME_UNDERSCORE}${CMAKE_SHARED_LIBRARY_SUFFIX}${MSVC_SHARED_SUFFIX} ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+set(${CRATE_NAME}_SHARED_LIBS ${CMAKE_CURRENT_BINARY_DIR}/${CRATE_NAME}/target/debug/${CMAKE_SHARED_LIBRARY_PREFIX}${CRATE_NAME_UNDERSCORE}${CMAKE_SHARED_LIBRARY_SUFFIX}${MSVC_SHARED_SUFFIX})
