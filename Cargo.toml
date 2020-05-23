@@ -5,5 +5,5 @@ authors = ["Zachary Vacura <zach@hackzzila.com>"]
 edition = "2018"
 
 [dependencies]
-finch-frontend-api = { path = '../finch-frontend-api' }
+finch-frontend-api = { path = '../finch-frontend-api', git = "https://github.com/finch-gen/finch-frontend-api" }
 lazy_static = "1.4.0"
